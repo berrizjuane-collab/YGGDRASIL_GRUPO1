@@ -45,6 +45,9 @@ struct PilaDefensa {
 // (me enacnatria que se un int generado aleatoriamente) para poder manipularlos
 // Todavia no se como podriamos inicializar ese identificador
 
+//Consideraciones de flujo de batalla:
+//El uso de habilidades se hace luego de la insercion
+
 struct NodoMunicion {
   int identificador_municion;
   int tipo_blast;
@@ -89,11 +92,34 @@ struct Operativo {
     // que recibe, para no estar peleando luego con agregarlos manualmente
 
   ~Operativo() {
+    while (escudos_tope->tope != NULL) {
+      NodoEscudo *temporal1 = escudos_tope->tope;
+      escudos_tope->tope = temporal1->siguiente_escudo;
+      delete temporal1;
+      temporal1 = NULL;
+    }
+    while (municiones_tope->frente != NULL) {
+      NodoMunicion *temporal1 = municiones_tope->frente;
+      municiones_tope->frente = temporal1->sig_municion;
+      delete temporal1;
+      temporal1 = NULL;
+    }
+    municiones_tope->final = NULL;
     delete escudos_tope;
     delete municiones_tope;
   } // Este es el DESTRUCTOR
+};
 
-  Operativo *sig_operativo;
+struct NodoBTree {
+  Operativo* ocupantes[3+1];
+  NodoBTree* descendientes[4+1]; //Ambos arrays tienen un ocupante EXTRA para manejar el rebose y el split
+  int contador;
+};
+
+struct Vocero_Recursion {
+  bool hubo_split = false;
+  Operativo *mediana_a_subir = NULL;
+  NodoBTree *hijo_derecho = NULL;
 };
 
 // Asignaciones universales:
@@ -115,7 +141,13 @@ struct Operativo {
 // Aqui se guardaran todos los personajes
 // El metodo de ordenacion es creciente. De menor a mayor.
 
-Operativo *lista_personajes1 = NULL;
+//
+
+// Operativo *lista_personajes1 = NULL; 
+
+//
+
+NodoBTree *Arbol = NULL;
 
 void blindaje_entrada(int &entrada) { // Este blindaje verifica si los datos
                                       // introducidos en el cin
@@ -133,14 +165,15 @@ void blindaje_entrada(int &entrada) { // Este blindaje verifica si los datos
   }
 }
 
-bool lista_personajes_esta_vacia() { // Verificacion
-  // Escencialmente debe hacerse esto en TODAS las funcioens
+/*
+bool lista_personajes_esta_vacia() { // OBSOLETA: reemplazada por arbol_esta_vacio()
   if (lista_personajes1 == NULL) {
     return true;
   } else {
     return false;
   }
 }
+*/
 
 bool pila_escudos_esta_vacia(Operativo *op) { // Verificacion basica
   if (op->escudos_tope->tope == NULL) {
@@ -213,37 +246,560 @@ void push_cola_municiones(Operativo *operativo_recibido, // Primitiva
   }
 }
 
+NodoBTree *nueva_estacion() { //Creacion de una nueva estacion o "nodo" del arbol. Se settean todos sus campos a NULL
+
+  NodoBTree *estacion_nueva = new NodoBTree();
+
+  for (int i = 0; i < 4; i++) {
+    estacion_nueva->ocupantes[i] = NULL;
+  }
+
+  for (int i = 0; i < 5; i++) {
+    estacion_nueva->descendientes[i] = NULL;
+  }
+
+  estacion_nueva->contador = 0;
+  return estacion_nueva;
+
+}
+
+bool arbol_esta_vacio() {
+  return (Arbol == NULL);
+}
+
+bool estacion_es_hoja(NodoBTree *nodo) { //Por logica de arbol, si el nodo no tiene un descendiente, no tiene ninguno
+  if (nodo == NULL) {
+    return true;
+  }
+  if (nodo->descendientes[0] == NULL) {
+    return true;
+  }
+  else {
+    return false;
+  }
+}
+
+int posicion_relativa(NodoBTree *estacion, int id_buscar) {
+  int i = 0;
+  while (i < estacion->contador && estacion->ocupantes[i]->id_numerico < id_buscar) {
+    i++;
+  }
+  return i; //Retorna exactamente el I del hijo por donde bajar
+}
+
+int buscar_posicion(NodoBTree *estacion, int id_buscar) {
+  int i = 0;
+  while (i < estacion->contador && estacion->ocupantes[i]->id_numerico != id_buscar) {
+    i++;
+  }
+  if (i >= estacion->contador) {
+    return -1;
+  }
+  else {
+    return i;
+  }
+}
+
 // La lista de las municiones es una COLA FIFO
 
-void ordenacion_de_ids(Operativo *nuevo) {
-  // se pregunta si la lista esta vacia
+/*
+void ordenacion_de_ids(Operativo *nuevo) { // OBSOLETA: reemplazada por insercion BTree
   if (lista_personajes_esta_vacia() == true) {
     lista_personajes1 = nuevo;
     nuevo->sig_operativo = NULL;
     return;
   }
-
-  // si el nuevo id es el menor de todos va de primero
   if (nuevo->id_numerico < lista_personajes1->id_numerico) {
     nuevo->sig_operativo = lista_personajes1;
     lista_personajes1 = nuevo;
     return;
   }
-
-  // en este caso se busca su lugar en el medio o al final
   Operativo *actual = lista_personajes1;
-
-  // mientras no lleguemos al final y el id del siguiente sea menor al nuevo
   while ((actual->sig_operativo != NULL) &&
          (actual->sig_operativo->id_numerico < nuevo->id_numerico)) {
     actual = actual->sig_operativo;
   }
-  // insertamos el nodo
   nuevo->sig_operativo = actual->sig_operativo;
   actual->sig_operativo = nuevo;
 }
+*/
 
-void insertar_escudos_en_pila(Operativo *personaje) {
+Operativo *buscar_en_arbol(NodoBTree *nodo_actual, int id_buscar) {
+
+  if (nodo_actual == NULL) {
+    return NULL;
+  }
+  
+  int i = posicion_relativa(nodo_actual, id_buscar);
+
+  if (i < nodo_actual->contador && nodo_actual->ocupantes[i]->id_numerico == id_buscar) {
+    return nodo_actual->ocupantes[i];
+  }
+
+  if (estacion_es_hoja(nodo_actual)) {
+    return NULL;
+  }
+
+  return buscar_en_arbol(nodo_actual->descendientes[i], id_buscar);
+
+}
+
+Operativo *busqueda_de_operativo(int id_buscar) {
+  return buscar_en_arbol(Arbol, id_buscar);
+}
+
+void insertar_en_estacion(NodoBTree *estacion, Operativo *insercion, NodoBTree *hijo_derecho) { //Maneja ambos casos de una vez (La reinsercion en desenpilado reasignando hijo derecho y la insercion comun)
+  int i = estacion->contador - 1;
+  while (i >= 0 && insercion->id_numerico < estacion->ocupantes[i]->id_numerico) {
+    estacion->ocupantes[i+1] = estacion->ocupantes[i];
+    estacion->descendientes[i+2] = estacion->descendientes[i+1];
+    i--;
+  }
+  estacion->ocupantes[i+1] = insercion;
+  estacion->descendientes[i+2] = hijo_derecho;
+  estacion->contador++;
+}
+
+Vocero_Recursion split(NodoBTree *estacion) {
+  Vocero_Recursion devuelta;
+  devuelta.hubo_split = true;
+
+  NodoBTree *estacion_nueva = nueva_estacion();
+  devuelta.mediana_a_subir = estacion->ocupantes[2]; //La mediana en 3-4 siempre es [2]
+  estacion_nueva->ocupantes[0] = estacion->ocupantes[3]; //Posicion de rebose
+  estacion_nueva->descendientes[0] = estacion->descendientes[3];
+  estacion_nueva->descendientes[1] = estacion->descendientes[4];
+  estacion->descendientes[3] = NULL;
+  estacion->descendientes[4] = NULL;
+  estacion->ocupantes[3] = NULL;
+  estacion->contador = 2;
+  estacion_nueva->contador++;
+  devuelta.hijo_derecho = estacion_nueva;
+
+  return devuelta;
+}
+
+Vocero_Recursion insercion_recursiva (NodoBTree *estacion, Operativo *insertar) {
+  Vocero_Recursion resultado;
+  if (estacion_es_hoja(estacion)) {
+    insertar_en_estacion(estacion, insertar, NULL);
+  }
+  else {
+    int i = posicion_relativa(estacion, insertar->id_numerico);
+    Vocero_Recursion abajo = insercion_recursiva(estacion->descendientes[i], insertar);
+
+    if (abajo.hubo_split) {
+      insertar_en_estacion(estacion, abajo.mediana_a_subir, abajo.hijo_derecho);
+    }
+
+  }
+  if (estacion->contador > 3) { //Unico verificador de SPLIT. >3 arbitrario ya que es el maximo de operativos permitidos en estacion
+    resultado = split(estacion);
+  }
+  return resultado;
+}
+
+void ordenacion_en_arbol(Operativo *insertar) {
+  if (arbol_esta_vacio()) {
+    NodoBTree *estacion_nueva = nueva_estacion();
+    Arbol = estacion_nueva;
+    insertar_en_estacion(estacion_nueva, insertar, NULL);
+    return;
+  }
+
+  if (busqueda_de_operativo(insertar->id_numerico)) {
+    delete insertar;
+    insertar = NULL;
+    return;
+  }
+
+  Vocero_Recursion splitear_raiz = insercion_recursiva(Arbol, insertar);
+
+  if (splitear_raiz.hubo_split) {
+    NodoBTree *nueva_raiz = nueva_estacion();
+    nueva_raiz->ocupantes[0] = splitear_raiz.mediana_a_subir;
+    nueva_raiz->descendientes[0] = Arbol;
+    nueva_raiz->descendientes[1] = splitear_raiz.hijo_derecho;
+    nueva_raiz->contador++;
+    Arbol = nueva_raiz;
+  }
+
+}
+
+bool hubo_underflow(NodoBTree *estacion) {
+  return (estacion->contador < 1);
+}
+
+NodoBTree *buscar_estacion(NodoBTree *estacion, Operativo *referencia) { //A que estacion pertenece x operativo??
+  if (arbol_esta_vacio()) {
+    return NULL;
+  }
+  if (estacion_es_hoja(estacion)) { //Llegue a hoja y no he conseguido aun. Hago ultima busqueda en hoja
+    int i = 0;
+    while (i < estacion->contador && estacion->ocupantes[i]->id_numerico != referencia->id_numerico) {
+      i++;
+    }
+    if (i >= estacion->contador) {
+      return NULL;
+    }
+    else {
+      return estacion;
+    }
+  }
+
+  //Verifico en estacion actual
+  int i = buscar_posicion(estacion, referencia->id_numerico);
+  if (i == -1) {
+    int k = posicion_relativa(estacion, referencia->id_numerico);
+    return buscar_estacion(estacion->descendientes[k], referencia);
+  }
+  else {
+    return estacion;
+  }
+}
+
+NodoBTree *buscar_hoja_mayores(NodoBTree *estacion) {//Busqueda de hoja en base a una sola bajada direccional 
+  if (estacion_es_hoja(estacion)) {
+    return estacion;
+  }
+  else {
+    int k = estacion->contador;
+    return buscar_hoja_mayores(estacion->descendientes[k]);
+  }
+}
+
+Operativo *busqueda_predecesor(Operativo *a_borrar) {
+  NodoBTree *estacion_perteneciente = buscar_estacion(Arbol, a_borrar);
+  if (estacion_perteneciente == NULL) { //Si no se encontro, simplemente no hay por donde buscar
+    //Creo que es innecesario poner un cout de aviso ya que esta es un helper
+    return NULL;
+  }
+  if (estacion_es_hoja(estacion_perteneciente)) { //Si la estacion es hoja, no hay predecesor el cual buscar. Simplemente se
+    // elimina en la estacion
+    return NULL;
+  }
+  //En que posicion esta mi operativo??
+  int i = buscar_posicion(estacion_perteneciente, a_borrar->id_numerico);
+  if (i == -1) {
+    return NULL;
+  }
+  //Busqueda de la hoja
+  estacion_perteneciente = estacion_perteneciente->descendientes[i];
+  NodoBTree *estacion_hoja = buscar_hoja_mayores(estacion_perteneciente);
+
+  return estacion_hoja->ocupantes[estacion_hoja->contador - 1];
+}
+
+void borrado_en_hoja(NodoBTree *estacion, int id_a_borrar, bool liberar, bool hoja) {
+  //Verificacion de hoja (Creo que sera innecesario)
+  if (hoja) {
+    if (!estacion_es_hoja(estacion)) {
+        return;
+    }
+  }
+  int i = buscar_posicion(estacion, id_a_borrar);
+  if (i == -1) return;
+  //Es el operativo a borrar el ultimo elemento de la estacion?
+  if (i + 1 >= estacion->contador) {
+    //De ser asi, solo lo elimino
+    if (liberar) {delete estacion->ocupantes[i];}
+    estacion->contador--;
+  }
+  else {
+    //muevo el/los siguientes
+    if (liberar) {delete estacion->ocupantes[i];}
+    estacion->contador--;
+    for (int k = i; k < estacion->contador; k++) {
+      estacion->ocupantes[k] = estacion->ocupantes[k+1];
+    }
+  }
+}
+
+void borrado_interno(Operativo *a_borrar) {
+  //En que estacion esta?
+  NodoBTree *estacion_perteneciente_operativo = buscar_estacion(Arbol, a_borrar);
+  if (estacion_perteneciente_operativo == NULL) return;
+  //Quien es su predecesor??
+  Operativo *predecesor = busqueda_predecesor(a_borrar);
+  if (predecesor == NULL) return;
+  //Ojo al orden de lineas
+  int i = buscar_posicion(estacion_perteneciente_operativo, a_borrar->id_numerico);
+  if (i == -1) return;
+  //Mi operativo a borrar esta en posicion i
+  NodoBTree *estacion_perteneciente_predecesor = buscar_estacion(Arbol, predecesor);
+  int k = buscar_posicion(estacion_perteneciente_predecesor, predecesor->id_numerico);
+  if (k == -1) return;
+  //Mi predecesor esta en posicion k
+  delete a_borrar;
+  estacion_perteneciente_operativo->ocupantes[i] = predecesor;
+  borrado_en_hoja(estacion_perteneciente_predecesor, predecesor->id_numerico, false, false);
+  //Como el predecesor es siempre el ultimo de la hoja, realmente no se ejecuta ningun corrido de datos en la hoja
+  //Importante pararse aqui a explicar lo siguiente:
+  //En el borrado interno, lo que se hace es sobreescribir la posicion del nodo a borrar con su predecesor
+  //Se borra, el nodo a borrar, y el predecesor toma su posicion, pero, sucede lo siguiente:
+  //En el nodo origen del predecesor (donde estaba antes), NO se borra al predecesor, ya que estarias borrando el nodo que acabas de reemplazar.
+  //En cambio, simplemente se obsoletiza, restandole al contador para asi decirle al programa: ese operativo ya no existe en ese array, ya que
+  //El contador es la "unica verdad". Por eso el flag de "false" donde esta el booleano de liberar, ya que le avisa a borrado en hoja
+  //que no se debe liberar ese operativo
+}
+
+bool puede_prestar(NodoBTree *estacion) {
+  return (estacion->contador > 1);
+}
+
+void insertar_hijo_borrow(NodoBTree *padre, int indice_pobre, int derecha_o_izquierda) { //1 por DERECHA, 2 por IZQUIERDA
+  if (derecha_o_izquierda == 1) {
+    //Es borrow por derecha
+    //Busco el mayor elemento de descendientes[indice_pobre]
+    int i = padre->descendientes[indice_pobre]->contador; 
+    NodoBTree *hijo_pasar = padre->descendientes[indice_pobre + 1]->descendientes[0];
+    padre->descendientes[indice_pobre]->descendientes[i+1] = hijo_pasar; //i+1 para no pisar el hijo ya existiente (1 hijo)
+    int k = 0;
+    //Corro todos los hijos restantes que quedarom MAS ALLA del hijo trasladado
+    while (k < padre->descendientes[indice_pobre+1]->contador+1) {
+      padre->descendientes[indice_pobre+1]->descendientes[k] = padre->descendientes[indice_pobre+1]->descendientes[k+1];
+      k++;
+      //Este ciclo ya sobreescribe y desenlaza el array del nodo transferido
+    }
+  }
+  else {
+    //Es borrow por izquierda
+    //Aqui el nodo prestante es padre->descendientes[indice_pobre - 1]
+    //Y pasa el ULTIMO hijo del nodo prestante, que cae en el PRIMER puesto del nodo recibiente
+    //como el donante
+    //dona su ultimo hijo, no hace falta reorganizar hijos
+    //Pero si desenlazar, ojo
+    //Busco el ultimo elemento del donante
+    int i = padre->descendientes[indice_pobre - 1]->contador-1;
+    NodoBTree *hijo_pasar = padre->descendientes[indice_pobre-1]->descendientes[i+1];
+    //Muevo los hijos existentes en nodo underflow un lugar exacto para asi hacerle espacio al hijo nuevo
+    int k = padre->descendientes[indice_pobre]->contador;
+    while (k >= 0) {
+      padre->descendientes[indice_pobre]->descendientes[k+1] = padre->descendientes[indice_pobre]->descendientes[k];
+      k--;
+    }
+    padre->descendientes[indice_pobre]->descendientes[0] = hijo_pasar;
+    padre->descendientes[indice_pobre-1]->descendientes[i+1] = NULL;
+  }
+}
+
+void borrow_derecho(NodoBTree *padre, int indice_nodo_pobre, bool hoja) { //Mi hermano de la derecha puede prestar??
+  //El nodo pobre es padre->descendientes[indice_nodo_pobre]
+  if (indice_nodo_pobre >= padre->contador) {
+    return;
+  }
+  if (padre->descendientes[indice_nodo_pobre + 1] == NULL) {
+    return;
+  }
+  if (!puede_prestar(padre->descendientes[indice_nodo_pobre + 1])) {
+    return;
+  } 
+  //No es null y si puede prestar
+  //Baja el separador y toma su lugar el menor del nodo a prestar
+  //El separador es naturalmente padre->ocupantes[indice_nodo_pobre]
+  Operativo *a_subir = padre->descendientes[indice_nodo_pobre + 1]->ocupantes[0];
+  if (hoja) { //Hoja?? Inseramos sin mover hijos
+    padre->descendientes[indice_nodo_pobre]->ocupantes[0] = padre->ocupantes[indice_nodo_pobre];
+  }
+  else { //No hoja?? Toca mover hijos
+    insertar_hijo_borrow(padre, indice_nodo_pobre, 1);
+    padre->descendientes[indice_nodo_pobre]->ocupantes[0] = padre->ocupantes[indice_nodo_pobre];
+  }
+  padre->descendientes[indice_nodo_pobre]->contador++;
+  padre->ocupantes[indice_nodo_pobre] = a_subir;
+  //Ahora la limpieza del nodo donante (cerrar el hueco)
+  //Como es borrow derecho, sale el primer ocupante del derecho, por ende, hay que cerrar hueco
+  borrado_en_hoja(padre->descendientes[indice_nodo_pobre + 1], a_subir->id_numerico, false, false);
+}
+
+void borrow_izquierdo(NodoBTree *padre, int indice_nodo_pobre, bool hoja) {
+  if (indice_nodo_pobre <= 0) {
+    return;
+  }
+  if (padre->descendientes[indice_nodo_pobre - 1] == NULL) {
+    return;
+  }
+  if (!puede_prestar(padre->descendientes[indice_nodo_pobre - 1])) {
+    return;
+  }
+  //Puede prestar
+  //El separador es padre->ocupantes[indice_nodo_pobre-1] 
+  //Busco ultimo elemento de nodo donante
+  int i = padre->descendientes[indice_nodo_pobre-1]->contador - 1;
+  Operativo *a_subir = padre->descendientes[indice_nodo_pobre - 1]->ocupantes[i];
+  if (hoja) { //Estamos en hoja?? Simplemente insertamos sin mover hijos
+    padre->descendientes[indice_nodo_pobre]->ocupantes[0] = padre->ocupantes[indice_nodo_pobre-1];
+  }
+  else { //No hoja, debo reposicionar hijos
+    insertar_hijo_borrow(padre, indice_nodo_pobre, 2);
+    padre->descendientes[indice_nodo_pobre]->ocupantes[0] = padre->ocupantes[indice_nodo_pobre-1];
+  }
+  padre->descendientes[indice_nodo_pobre]->contador++;
+  padre->ocupantes[indice_nodo_pobre-1] = a_subir;
+  //Como estoy pasando el ultimo dato del nodo donante, no hace falta tapar hueco
+  //Pero si nullearlo
+  padre->descendientes[indice_nodo_pobre-1]->ocupantes[i] = NULL;
+  padre->descendientes[indice_nodo_pobre-1]->contador--;
+  //En ambos casos, el elemento donado cae en la posicion 0, ya que por definicion, al estar en underflow, no tiene
+  //ningun elemento
+}
+
+void merge_estaciones(NodoBTree *padre, int indice_izquierda) { //Aqui notas importantes
+  //En el merge, el nodo absorbiente siempre sera el izquierdo. Si el izquierdo tiene hermano derecho, se absorbe a ese hermano
+  //Pero si no tiene, el izquierdo pasa a ser su hermano izquierdo (se transfiere identidad) y el izquierdo absorbe al pobre
+  //Al fusionar nodos, el separador del padre baja a vivir en el nuevo nodo fusionado
+  //abriendo asi la posibilidad de el padre tambien quedar en underflow, subiendo asi el problema hasta
+  //potencialmente la raiz, donde en caso de quedar en underflow, el arbol pierde un nivel
+
+  //Primero es necesario el chequeo de casos
+
+  //caso A
+  if (padre->descendientes[indice_izquierda + 1] != NULL) {
+    NodoBTree *izquierda = padre->descendientes[indice_izquierda];
+    NodoBTree *derecha = padre->descendientes[indice_izquierda+1];
+
+    izquierda->ocupantes[izquierda->contador] = padre->ocupantes[indice_izquierda];//separador
+    //Esta funcion tambien contempla el traslado de hijos
+    izquierda->contador++;
+
+    //Ahora absorbemos todos los ocupantes del derecho
+    //Pero decir todos no es acertado, ya que como se podra dilucidar logicamente, la condicion sine qua non del merge (en esta arquitectura)
+    //es que todos los hermanos tengan exactamente 1 hijo menos el pidiente que es el unico con 0. Sin ambiguedades.
+    //Se pasa unicamente el unico ocupante del nodo derecho que esta en posicion [0]
+
+    izquierda->ocupantes[izquierda->contador] = derecha->ocupantes[0];
+    izquierda->contador++;
+    //Ahora, hay que trasladar los hijos del nodo derecho al izquierdo
+    //los cuales son exactamente 2
+    //pero ojo, izquierda al comenzar teniendo 0 ocupantes puede tener 1 hijo al tratarse de nodo interno
+    //contemplamos ese caso
+    for (int i = 0; i < 2; i++) {
+      izquierda->descendientes[i+1] = derecha->descendientes[i];
+      derecha->descendientes[i] = NULL;
+    }
+    //Hecho el traslado de ocupantes e hijos, se elimina el nodo derecho
+    delete derecha;
+    derecha = NULL;
+
+    //Se corren todos los ocupantes del padre ya que el separador bajo
+    borrado_en_hoja(padre, padre->ocupantes[indice_izquierda]->id_numerico, false, false);
+    //Corro todos los punteros proximos al del hijo fallecido para asi obsoletizarlo
+    for (int i = indice_izquierda+1; i < padre->contador+1; i++) { //contador + 1 ya que previamente en borrado se bajo el contador (creo)
+      padre->descendientes[i] = padre->descendientes[i+1];
+    }
+    padre->descendientes[padre->contador+1] = NULL;
+  }
+
+  //Caso B
+  else {
+    NodoBTree *izquierda = padre->descendientes[indice_izquierda-1];
+    NodoBTree *derecha = padre->descendientes[indice_izquierda];
+    //Ahora, como el derecha es el pobre, no hace falta transferencia de ocupantes, solo del hijo
+    izquierda->ocupantes[izquierda->contador] = padre->ocupantes[indice_izquierda-1];
+    izquierda->contador++;
+    //Traslado de hijos. Izquierda tiene 2 hijos. Se debe trasladar el unico que tiene derecha en la posicion 2
+    izquierda->descendientes[2] = derecha->descendientes[0];
+    //Eliminacion del nodo derecho
+    delete derecha;
+    derecha = NULL;
+    //Se corren todos los ocupantes del padre
+    borrado_en_hoja(padre, padre->ocupantes[indice_izquierda-1]->id_numerico, false, false);
+    //Se obsoletiza el puntero del hijo fallecido (es el ultimo)
+    padre->descendientes[padre->contador+1] = NULL; //+1 ya que en borrado se resto el contador
+  }
+}
+
+bool resolver_underflow(NodoBTree *padre, int indice_pobre) {
+  if (padre == NULL) {
+    return false;
+  }
+
+  if (padre->descendientes[indice_pobre+1] != NULL && puede_prestar(padre->descendientes[indice_pobre+1])) {
+    bool es_hoja = estacion_es_hoja(padre->descendientes[indice_pobre]);
+    borrow_derecho(padre, indice_pobre, es_hoja);
+    return (padre->contador < 1);
+  }
+  else if (indice_pobre>0 && padre->descendientes[indice_pobre-1] != NULL && puede_prestar(padre->descendientes[indice_pobre-1])) {
+    bool es_hoja = estacion_es_hoja(padre->descendientes[indice_pobre]);
+    borrow_izquierdo(padre, indice_pobre, es_hoja);
+    return (padre->contador < 1);
+  }
+  else {
+    merge_estaciones(padre, indice_pobre);
+    return (padre->contador < 1);
+  }
+}
+
+bool propagar_underflow_derecha(NodoBTree *estacion) {//Helper para el caso del borrado interno (necesito saber donde esta el predecesor que se borro
+  //y evaluar underflow en esa hoja)
+  if (estacion_es_hoja(estacion)) {
+    return hubo_underflow(estacion);
+  }
+  int indice = estacion->contador; //Baja por el mas a la derecha
+  bool hijo_underflow = propagar_underflow_derecha(estacion->descendientes[indice]);
+  if (hijo_underflow) {
+    resolver_underflow(estacion, indice); //en var indice ya que el predecesor seria el mas a la derecha
+  }
+  return hubo_underflow(estacion);
+}
+
+bool borrar_recursivo(NodoBTree *estacion, int id) {
+  if (estacion_es_hoja(estacion)) {
+    borrado_en_hoja(estacion, id, true, true);
+    return hubo_underflow(estacion);
+  }
+
+  int i = buscar_posicion(estacion, id);
+  if (i != -1) { //lo encontro en nodo actual (y el nodo actual no es hoja)
+    borrado_interno(estacion->ocupantes[i]);
+    bool hijo_underflow = propagar_underflow_derecha(estacion->descendientes[i]);
+    if (hijo_underflow) {
+      resolver_underflow(estacion, i);
+    }
+  }
+
+  else {//No lo encontro en este nodo. Toca bajar
+    int i = posicion_relativa(estacion, id);
+    bool hijo_underflow = borrar_recursivo(estacion->descendientes[i], id);
+    if (hijo_underflow) {
+      resolver_underflow(estacion, i);
+    }
+  }
+
+  return hubo_underflow(estacion); //Este es el ultimo chequeo. Si esto devuelve true, la raiz es underflow y se elimina un nivel
+
+}
+
+void eliminar_operativo(int id_eliminar) {
+  if (Arbol == NULL) {
+    cout << "[!] ERROR. NO HAY OPERATIVOS EN ARBOL." << endl;
+    return;
+  }
+
+  Operativo *existe = buscar_en_arbol(Arbol, id_eliminar);
+  if (existe == NULL) {
+    cout << "[!] ERROR. EL OPERATIVO QUE DESEA ELIMINAR NO EXISTE" << endl;
+    return;
+  }
+
+  borrar_recursivo(Arbol, id_eliminar);
+
+  //Caso reduccion de nivel
+  if (Arbol->contador == 0 && Arbol->descendientes[0] != NULL) {
+    NodoBTree *vieja_raiz = Arbol;
+    Arbol = Arbol->descendientes[0];
+    vieja_raiz->descendientes[0] = NULL;
+    delete vieja_raiz;
+  }
+
+  else if (Arbol->contador == 0 && estacion_es_hoja(Arbol)) {
+    delete Arbol;
+    Arbol = NULL;
+  }
+
+}
+
+void insertar_escudos_en_pila(Operativo *personaje) { 
   // identificar cuantos y que escudos necesita segun su clase ya asignada
   int cantidad = 0;
   int tipo = 0;
@@ -300,9 +856,8 @@ void insertar_municiones_en_cola(Operativo *personaje) {
   }
 }
 
-Operativo *busqueda_de_operativo(int id_modificar) {
-  // esta funcion debe hacer una busqueda y devolver un operativo especifico,
-  // para usarla en demas funciones y no tener que hacer recorrido manual
+/* Obsoleto
+// Operativo *busqueda_de_operativo(int id_modificar) {
   Operativo *actual = lista_personajes1;
   while (actual != NULL) {
     if (actual->id_numerico == id_modificar) {
@@ -312,6 +867,7 @@ Operativo *busqueda_de_operativo(int id_modificar) {
   }
   return NULL;
 }
+*/
 
 void creacion_de_personaje() {
   int id = 0, bando = 0, clase = 0, hp = 0;
@@ -353,11 +909,10 @@ void creacion_de_personaje() {
   }
 
   Operativo *nuevo_personaje = new Operativo(id, bando, hp, clase);
-  nuevo_personaje->sig_operativo = NULL;
 
   insertar_escudos_en_pila(nuevo_personaje);
   insertar_municiones_en_cola(nuevo_personaje);
-  ordenacion_de_ids(nuevo_personaje);
+  ordenacion_en_arbol(nuevo_personaje);
 
   cout << "[+] Operativo [" << id << "] equipado en el sistema exitosamente."
        << endl;
@@ -400,22 +955,18 @@ NodoMunicion *pop_simple_cola(Operativo *operativo_recibido) { // Primitiva
   return actual;
 }
 
-Operativo *procedimiento_busqueda() {
-  // esta funcion devuelve la referencia de un operativo deseado. Es escencial
-  // ya que se utiliza en casi todas las funciones posteriores
+/* Obsoleto
+// Operativo *procedimiento_busqueda() {
   int id_modificar = 0;
   cout << ">> Introduzca el ID del operativo a modificar/consultar: " << endl;
-  blindaje_entrada(id_modificar); // blindaje para evitar errores de entrada de
-                                  // datos por el usuario
-  Operativo *operativo_rec =
-      busqueda_de_operativo(id_modificar); // Recorrido del operativo
-  if (operativo_rec == NULL) { // en caso de no ser encontrado se informa que no
-                               // se encuentra dentro del operativo
-    cout << "[!] ERROR: Operativo [" << id_modificar
-         << "] no localizado en el Nucleo." << endl;
+  blindaje_entrada(id_modificar);
+  Operativo *operativo_rec = busqueda_de_operativo(id_modificar);
+  if (operativo_rec == NULL) {
+    cout << "[!] ERROR: Operativo [" << id_modificar << "] no localizado en el Nucleo." << endl;
   }
   return operativo_rec;
 }
+*/
 
 NodoEscudo *procedimiento_busqueda_escudo(Operativo *operativo_recibido,
                                           int escudo_modificar) {
@@ -602,131 +1153,40 @@ void mostrar_cola_municiones(
   }
 }
 
-void mostrar_operativos() {
-  // Verificacion global de lista
-  if (lista_personajes_esta_vacia()) {
-    cout << "[!] ERROR: El sistema Yggdrasil no detecta operativos inyectados."
-         << endl;
-    return;
-  }
+/*
+void mostrar_operativos() { // Obsoleto
+  if (lista_personajes_esta_vacia()) { return; }
   Operativo *aux = lista_personajes1;
-  cout << "LISTADO DE OPERATIVOS EN EL NUCLEO" << endl;
-  // Recorro toda la lista de personajes
-  while (aux != NULL) {
-    cout << " [*] ID: " << aux->id_numerico << " | ";
-    // Demostracion de bandos y clases segun su valor numerico
-    if (aux->bando_perteneciente == 1)
-      cout << "Bando: NEON | ";
-    else
-      cout << "Bando: OMEGA | ";
-    if (aux->clase_tipo == 1)
-      cout << "Clase: JUGGERNAUT | ";
-    else if (aux->clase_tipo == 2)
-      cout << "Clase: EJECUTOR | ";
-    else
-      cout << "Clase: HACKER | ";
-    cout << "HP: " << aux->hp_base << endl;
-    aux = aux->sig_operativo;
-  }
-  cout << "------------------------------------------" << endl;
-
-  // Menu de decicion de parte del usuario
+  while (aux != NULL) { aux = aux->sig_operativo; }
   int opcion_consulta = 0;
   do {
-    cout << "1. Ver los escudos de algun operativo" << endl;
-    cout << "2. Ver las municiones de algun operativo" << endl;
-    cout << "3. Retirarse" << endl;
-    cout << ">> Elija una opcion: " << endl;
-    blindaje_entrada(opcion_consulta);
-
-    switch (opcion_consulta) {
-    case 1: {
-      // busqueda del operativo y llamdo de funcion para mostrar
-      Operativo *operativo_consulta = procedimiento_busqueda();
-      if (operativo_consulta != NULL) {
-        mostrar_pila_escudos(
-            operativo_consulta); // Estas funciones se definen anteriormente,
-                                 // pero se reusan aca
-      }
-      break;
-    }
-    case 2: {
-      // Mismo procedimiento para municiones
-      Operativo *operativo_consulta = procedimiento_busqueda();
-      if (operativo_consulta != NULL) {
-        mostrar_cola_municiones(operativo_consulta);
-      }
-      break;
-    }
-    case 3: {
-      // retorno al menu principal
-      cout << "[*] Retornando al Centro de Mando..." << endl;
-      break;
-    }
-    default: {
-      cout << "[!] Opcion invalida. Vuelva a intentarlo." << endl;
-      break;
-    }
-    }
-  } while (opcion_consulta != 3); // Bucle hasta que el usuario decida salir
+    Operativo *operativo_consulta = procedimiento_busqueda();
+    (void)operativo_consulta;
+  } while (opcion_consulta != 3);
 }
+*/
 
-void Eliminar_operativos(int id_extirpar) {
-  // Verificacion de lista vacia
-  if (lista_personajes_esta_vacia()) {
-    cout << "[!] No se encuentra ningun personaje en el sistema actualmente."
-         << endl;
-    return;
-  }
-
-  Operativo *nuevo =
-      lista_personajes1; // Puntero auxiliar que inicia apuntando en la cabeza
-                         // de la lista para buscar el nodo
+/*
+void Eliminar_operativos(int id_extirpar) { // OBSOLETA
+  if (lista_personajes_esta_vacia()) { return; }
+  Operativo *nuevo = lista_personajes1;
   Operativo *anterior = nullptr;
-
-  // Busqueda del dato
   while (nuevo != nullptr && nuevo->id_numerico != id_extirpar) {
     anterior = nuevo;
     nuevo = nuevo->sig_operativo;
   }
-
   if (nuevo == nullptr) {
-    cout << "[!] No se encuentra el personaje con ID: " << id_extirpar
-         << endl; // verificacion de que el id no existe en la lista
+    cout << "[!] No se encuentra el personaje con ID: " << id_extirpar << endl;
   } else {
-    // Caso 1:
-    if (anterior == nullptr) {
-      lista_personajes1 =
-          nuevo->sig_operativo; // por lo contrario, si el nodo a eliminar es el
-                                // primero se actualiza la cabeza de la lista
-    } else {
-      // Caso 2:
-      anterior->sig_operativo =
-          nuevo->sig_operativo; // si no es el primero, se conecta el nodo
-                                // anterior con el siguiente del que vamos a
-                                // eliminar
-    }
-
-    while (nuevo->escudos_tope->tope != NULL) {
-      NodoEscudo *destruir = pop_simple_pila(
-          nuevo); // Al eliminar el operativo, se elimina todos los datos que
-                  // jerarquicamente le pertenecen.
-      delete destruir; // se hace con sus pops tradicionales, mediante iteracion
-      destruir = NULL;
-    }
-
-    while (nuevo->municiones_tope->frente != NULL) {
-      NodoMunicion *destruir = pop_simple_cola(nuevo);
-      delete destruir;
-      destruir = NULL; // IMPORTANTE: se setean sus punteros a NULL
-    }
-
+    if (anterior == nullptr) { lista_personajes1 = nuevo->sig_operativo; }
+    else { anterior->sig_operativo = nuevo->sig_operativo; }
+    while (nuevo->escudos_tope->tope != NULL) { NodoEscudo *d = pop_simple_pila(nuevo); delete d; }
+    while (nuevo->municiones_tope->frente != NULL) { NodoMunicion *d = pop_simple_cola(nuevo); delete d; }
     delete nuevo;
     nuevo = NULL;
-    cout << "[+] Personaje [" << id_extirpar << "] eliminado con exito."
-         << endl;
   }
 }
+*/
 
 void Eliminar_pila_escudos(
     Operativo *operativo_recibido,
@@ -841,41 +1301,105 @@ void Eliminar_cola_municiones(
   }
 }
 
-void Destruccion_total() {
-  // Recorrido para ver si la lista tiene operativos o se continene vacia
-  if (lista_personajes1 == nullptr) {
-    cout << "[*] El sistema se encuentra vacio. Nada que destruir." << endl;
-    return;
-  }
-
-  cout << "[!] INICIANDO DESTRUCCION TOTAL DEL SISTEMA..." << endl;
-  // recorrido de la lista completa
+/*
+void Destruccion_total() { // Obsoleto
+  if (lista_personajes1 == nullptr) { return; }
   while (lista_personajes1 != nullptr) {
     Operativo *op_nuevo = lista_personajes1;
-
-    cout << "[*] Purgando ID [" << op_nuevo->id_numerico << "]..." << endl;
-
-    // Eliminacion de la pila antes de la ejecucion total y no dejar memoria
-    // desperdiciada
-    while (op_nuevo->escudos_tope->tope != nullptr) {
-      pop_pila_escudos(
-          op_nuevo); // Estos pops ya incluyen DELETE dentro de sus
-                     // procedimientos, a diferencia de los pop_simples
-    }
-    // Eliminacion de la cola antes de la ejecucion total y no dejar memoria
-    // desperdiciada
-    while (op_nuevo->municiones_tope->frente != nullptr) {
-      pop_cola_municiones(op_nuevo); // Lo mismo con estos
-    }
-
+    while (op_nuevo->escudos_tope->tope != nullptr) { pop_pila_escudos(op_nuevo); }
+    while (op_nuevo->municiones_tope->frente != nullptr) { pop_cola_municiones(op_nuevo); }
     lista_personajes1 = lista_personajes1->sig_operativo;
-    delete op_nuevo; // Ciclo iterativo donde se va limpiando personaje por
-                     // personaje
+    delete op_nuevo;
     op_nuevo = NULL;
   }
-
-  cout << "[+] DESTRUCCION TOTAL DEL SISTEMA COMPLETADA!!" << endl;
 }
+*/
+
+//es esta
+
+/*
+void ladron_de_escudos() {
+
+    bool exito = false;
+    
+    cout<<"[+]ROBO DE ESCUDOS"<<endl;
+
+    cout<<"[->] Ingrese el ID del operativo LADRON: "<<endl;
+    int id;
+    cin>>id;
+    Operativo *recibido = busqueda_de_operativo(id);
+
+    if (recibido == NULL) {
+      cout << "[!] El operativo seleccionado no existe. Abortando directriz." << endl;
+      return;
+    }
+
+
+    switch(recibido->bando_perteneciente) {
+        case 1:
+            {
+                //NEON es int 1, recibido es neon
+                //busqueda de todos los operativos del bando contrario
+                Operativo *actual = lista_personajes1;
+                if (lista_personajes_esta_vacia()) {
+                    return;
+                }
+                while (actual != NULL) {
+                    if (actual->bando_perteneciente == 2) {
+                        if (recibido->hp_base > 80) {
+                            //Robo 
+                            while (actual->escudos_tope->tope != NULL) {
+                                NodoEscudo *robar = pop_simple_pila(actual);
+                                push_pila_escudos(recibido, robar);
+                            }
+                            exito = true;
+                        }
+                        else {
+                            cout << "[!]ERROR, HP insuficiente." << endl;
+                            exito = false;
+                            break;
+                        }
+                    }
+                    actual = actual->sig_operativo;
+                }
+            }
+        case 2:
+            {
+                //OMEGA es int 2, recibido es omega
+                //busqueda de todos los operativos del bando contrario
+                Operativo *actual = lista_personajes1;
+                if (lista_personajes_esta_vacia()) {
+                    return;
+                }
+                while (actual != NULL) {
+                    if (actual->bando_perteneciente == 1) {
+                        if (recibido->hp_base > 80) {
+                            //Robo 
+                            while (actual->escudos_tope->tope != NULL) {
+                                NodoEscudo *robar = pop_simple_pila(actual);
+                                push_pila_escudos(recibido, robar);
+                            }
+                            exito = true;
+                        }
+                        else {
+                            cout << "[!] ERROR!, HP insuficiente." << endl;
+                            exito = false;
+                            break;
+                        }
+                    }
+                    actual = actual->sig_operativo;
+                }
+            }
+    }
+
+    if (exito) {
+      cout <<"[+] ORDEN EXITOSA."<<endl;
+    }
+    else {
+      cout << "[!] Abortando directriz." << endl;
+    }
+}
+*/ // Obsoleto
 
 void actualizar_pila_escudos(
     Operativo
@@ -957,6 +1481,16 @@ void actualizar_pila_escudos(
                << endl;
           cout << ">> Introduzca el nuevo identificador para el escudo: ";
           blindaje_entrada(identificador_nuevo);
+
+          NodoEscudo *verificador = operativo_recibido->escudos_tope->tope;
+          while (verificador != NULL && verificador->identificador_escudo != identificador_nuevo) {
+            verificador = verificador->siguiente_escudo;
+          }
+
+          if (verificador != NULL) {
+            cout << "[!] ERROR. Identificador ya existente en los escudos del operativo." << endl;
+            return;
+          }
 
           actual->identificador_escudo =
               identificador_nuevo; // Simple reasignacion de dato
@@ -1083,6 +1617,16 @@ void actualizar_cola_municiones(
           cout << ">> Introduzca el nuevo identificador: ";
           blindaje_entrada(nuevo_id);
 
+          NodoMunicion *verificador = operativo_recibido->municiones_tope->frente;
+          while (verificador != NULL && verificador->identificador_municion != nuevo_id) {
+            verificador = verificador->sig_municion;
+          }
+
+          if (verificador != NULL) {
+            cout << "[!] ERROR. Identificador ya existente en las municiones del operativo." << endl;
+            return;
+          }
+
           actual->identificador_municion = nuevo_id; // Reasignacion
           cout << "[+] Identificador actualizado correctamente. Nuevo ID: "
                << actual->identificador_municion << endl;
@@ -1152,7 +1696,8 @@ void reequipar_operativo(
   insertar_municiones_en_cola(op);
 }
 
-void actualizar_operativos() { // Actualizador de operitvos
+/*
+void actualizar_operativos() { // Obsoleto
   // Esta funcion comoprende el menu principal de actualizaciones
   // Aqui se integran los actualizadores de colas y pilas, siendo este el de
   // jerarquia principal
@@ -1343,6 +1888,7 @@ void actualizar_operativos() { // Actualizador de operitvos
     cout << "[*] Lista de operativos vacia. No hay nada que modificar." << endl;
   }
 }
+*/ // fin actualizar_operativos OBSOLETA
 
 void centro_de_mando() {
   int directriz = 0;
@@ -1356,6 +1902,7 @@ void centro_de_mando() {
     cout << "3. BUSQUEDA DE OPERATIVOS" << endl;
     cout << "4. MOSTRAR OPERATIVOS" << endl;
     cout << "5. SALIR DEL SIMULADOR" << endl;
+    cout << "6.Robar" << endl;
     cout << ">> Ingrese directriz: ";
 
     blindaje_entrada(directriz);
@@ -1368,45 +1915,43 @@ void centro_de_mando() {
       break;
     }
 
-    case 2: { // Update
-      actualizar_operativos();
+    case 2: { // Update - PENDIENTE: reconectar con logica BTree
+      // actualizar_operativos();
       break;
     }
 
-    case 3: { // Read
-      // Impresion de todos los datos del operativo buscado
-      cout << "BUSQUEDA DE INTELIGENCIA" << endl;
+    case 3: { // Read - PENDIENTE: reconectar con buscarEnArbol()
+      /* cout << "BUSQUEDA DE INTELIGENCIA" << endl;
       Operativo *encontrado = procedimiento_busqueda();
       if (encontrado != NULL) {
         cout << "[+] Datos clasificados del Operativo:" << endl;
         cout << "[*] ID: " << encontrado->id_numerico << endl;
         cout << "[*] Bando: ";
-        if (encontrado->bando_perteneciente == 1) {
-          cout << "NEON";
-        } else {
-          cout << "OMEGA";
-        }
+        if (encontrado->bando_perteneciente == 1) { cout << "NEON"; }
+        else { cout << "OMEGA"; }
         cout << endl;
         cout << "[*] Clase: ";
-        if (encontrado->clase_tipo == 1)
-          cout << "JUGGERNAUT" << endl;
-        else if (encontrado->clase_tipo == 2)
-          cout << "EJECUTOR" << endl;
-        else
-          cout << "HACKER" << endl;
+        if (encontrado->clase_tipo == 1) cout << "JUGGERNAUT" << endl;
+        else if (encontrado->clase_tipo == 2) cout << "EJECUTOR" << endl;
+        else cout << "HACKER" << endl;
         cout << "[*] HP: " << encontrado->hp_base << endl;
-      }
+      } */
       break;
     }
 
-    case 4: { // Mostrarlos a todos
-      mostrar_operativos();
+    case 4: { // Mostrarlos a todos - PENDIENTE: reemplazar con recorrido BTree
+      // mostrar_operativos();
       break;
     }
 
-    case 5: { // Limpieza del sistema
-      Destruccion_total();
+    case 5: { // Limpieza del sistema - PENDIENTE: reemplazar con destruirArbol()
+      // Destruccion_total();
       break;
+    }
+
+    case 6: { // PENDIENTE: reescribir con recorrido BTree
+        // ladron_de_escudos();
+        break;
     }
 
     default: {
